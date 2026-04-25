@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.*
+!.env.example
+retail_env/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Notebooks (project-specific)
+retail.ipynb
+dump.ipynb
+
+# Data files (project-specific)
+orders.csv
+product_inventory.csv
+policy.txt
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+*.log
