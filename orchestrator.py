@@ -12,6 +12,7 @@ notebook or imported here after converting to .py modules.
 """
 
 import os
+import re
 from dotenv import load_dotenv
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
