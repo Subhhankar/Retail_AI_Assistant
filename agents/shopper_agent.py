@@ -6,11 +6,13 @@ Exports: run_personal_shopper(user_query: str) -> str
 """
 
 import os
-from dotenv import load_dotenv
 import re
+import json
+from dotenv import load_dotenv
+
 from langchain_community.tools import tool
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode
 from tenacity import (
@@ -106,19 +108,24 @@ def get_product(product_id: str) -> str:
 
     except Exception as e:
         return f"Product lookup failed: {str(e)}"
-    
+
+def _parse_stock(p: dict) -> dict:
+    """Safely parse stock_per_size whether it's a dict or a JSON string."""
+    stock = p.get("stock_per_size", {})
+    if isinstance(stock, str):
+        try:
+            stock = json.loads(stock)
+        except (json.JSONDecodeError, TypeError):
+            stock = {}
+    return stock if isinstance(stock, dict) else {}
 def rank_products(products: list, size: str) -> list:
-    """
-    Rank by: in-stock for size → is_sale → bestseller_score → price.
-    Called after get_product results are collected.
-    """
     def score(p):
-        stock = p.get("stock_per_size", {}).get(size, 0) if size else 1
+        stock = _parse_stock(p).get(size, 0) if size else 1
         return (
-            -(stock > 0),                          # in-stock first (negated so True sorts first)
-            -int(p.get("is_sale", False)),          # sale items first
-            -p.get("bestseller_score", 0),          # higher score first
-            p.get("price", 9999),                   # lower price first
+            -(stock > 0),
+            -int(p.get("is_sale", False)),
+            -p.get("bestseller_score", 0),
+            p.get("price", 9999),
         )
     return sorted(products, key=score)
 
@@ -173,22 +180,19 @@ def personal_shopper_node(state: MessagesState):
     return {"messages": [response]}
 
 
-
 def should_continue(state: MessagesState):
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
     return END
 
+
 def ranker_node(state: MessagesState):
     """
-    Intercepts tool results, extracts products, pre-ranks them,
-    and injects ranking into the next LLM call as a system note.
+    Runs after tools. If get_product results are present, injects
+    a pre-ranked list into the prompt. Then loops back to the LLM
+    if it needs more tool calls (e.g. get_product after search_products).
     """
-    from langchain_core.messages import ToolMessage
-    import json
-
-    # Collect all product data from tool messages in this turn
     products = []
     requested_size = None
 
@@ -196,54 +200,61 @@ def ranker_node(state: MessagesState):
         if isinstance(msg, ToolMessage):
             try:
                 data = json.loads(msg.content)
-                # get_product returns a single dict; search_products returns a list
                 if isinstance(data, dict) and "product_id" in data:
                     products.append(data)
                 elif isinstance(data, list):
                     products.extend(data)
             except (json.JSONDecodeError, TypeError):
                 pass
-
-        # Extract size from the original human message
         if isinstance(msg, HumanMessage) and not requested_size:
             size_match = re.search(r'\bsize\s*(\w+)\b', msg.content, re.IGNORECASE)
             if size_match:
                 requested_size = size_match.group(1)
 
-    if not products:
-        # No products to rank — pass through normally
-        messages = [SystemMessage(content=PERSONAL_SHOPPER_PROMPT)] + state["messages"]
-        response = shopper_llm.invoke(messages)
-        return {"messages": [response]}
+    # Only inject ranking note when get_product results exist (have stock_per_size)
+    full_products = [p for p in products if "stock_per_size" in p]
 
-    ranked = rank_products(products, requested_size)
-    ranking_note = (
-        "\n\n[SYSTEM RANKING — follow this order strictly]\n"
-        + "\n".join(
-            f"#{i+1}: {p.get('title', 'Unknown')} | "
-            f"sale={p.get('is_sale')} | "
-            f"score={p.get('bestseller_score')} | "
-            f"price=${p.get('price')} | "
-            f"stock_size_{requested_size}="
-            f"{p.get('stock_per_size', {}).get(requested_size, '?') if requested_size else 'n/a'}"
-            for i, p in enumerate(ranked)
+    if full_products:
+        ranked = rank_products(full_products, requested_size)
+        ranking_note = (
+            "\n\n[SYSTEM RANKING — follow this order strictly]\n"
+            + "\n".join(
+                f"#{i+1}: {p.get('title', '?')} | "
+                f"sale={p.get('is_sale')} | "
+                f"score={p.get('bestseller_score')} | "
+                f"price=${p.get('price')} | "
+                f"stock_size_{requested_size}="
+                f"{_parse_stock(p).get(requested_size, '?') if requested_size else 'n/a'}"
+                for i, p in enumerate(ranked)
+            )
+            + "\nRecommend #1 unless it has 0 stock — then move to #2."
         )
-        + "\nRecommend #1 unless it has 0 stock — then move to #2."
-    )
+        augmented_prompt = PERSONAL_SHOPPER_PROMPT + ranking_note
+    else:
+        # search_products results only — LLM still needs to call get_product
+        augmented_prompt = PERSONAL_SHOPPER_PROMPT
 
-    augmented_prompt = PERSONAL_SHOPPER_PROMPT + ranking_note
     messages = [SystemMessage(content=augmented_prompt)] + state["messages"]
     response = shopper_llm.invoke(messages)
     return {"messages": [response]}
 
 
+def ranker_should_continue(state: MessagesState):
+    """After ranker runs, check if LLM wants more tool calls (e.g. get_product)."""
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "tools"
+    return END
+
+
+# ── Build graph ───────────────────────────────────────────────────────────────
 _shopper_tools = [search_products, get_product]
 _tool_node = ToolNode(_shopper_tools)
 
 _shopper_graph = StateGraph(MessagesState)
 _shopper_graph.add_node("personal_shopper", personal_shopper_node)
 _shopper_graph.add_node("tools", _tool_node)
-_shopper_graph.add_node("ranker", ranker_node)          # ← new node
+_shopper_graph.add_node("ranker", ranker_node)
 
 _shopper_graph.add_edge(START, "personal_shopper")
 _shopper_graph.add_conditional_edges(
@@ -251,11 +262,14 @@ _shopper_graph.add_conditional_edges(
     should_continue,
     {"tools": "tools", END: END}
 )
-_shopper_graph.add_edge("tools", "ranker")              # ← tools → ranker, not back to shopper
-_shopper_graph.add_edge("ranker", END)                  # ← ranker always ends
+_shopper_graph.add_edge("tools", "ranker")              # tools always go to ranker
+_shopper_graph.add_conditional_edges(
+    "ranker",
+    ranker_should_continue,
+    {"tools": "tools", END: END}                        # loop back if LLM needs more tool calls
+)
 
 shopper_agent = _shopper_graph.compile()
-
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -277,7 +291,7 @@ def _simplify_query(query: str) -> str:
 def _invoke_shopper(query: str) -> str:
     result = shopper_agent.invoke(
         {"messages": [HumanMessage(content=query)]},
-        config={"recursion_limit": 10},
+        config={"recursion_limit": 15},
     )
     last = result["messages"][-1].content
     if "tool_use_failed" in str(last) or "failed_generation" in str(last):
