@@ -7,7 +7,7 @@ Exports: run_personal_shopper(user_query: str) -> str
 
 import os
 from dotenv import load_dotenv
-
+import re
 from langchain_community.tools import tool
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
