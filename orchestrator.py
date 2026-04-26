@@ -43,7 +43,7 @@ Respond with ONLY:
 - "support"  → if the user mentions an order ID, return, refund, or order status
 
 Examples:
-"I want a red dress under $50" → shopper
+"I want modest evening quinceanera under $50" → shopper
 "Order O0002 doesn't fit, can I return it?" → support
 "Show me sale items" → shopper
 "What's the status of my order?" → support
