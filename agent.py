@@ -134,9 +134,10 @@ def evaluate_return(order_id: str) -> str:
 
     Policy rules:
     - Clearance items → never returnable
-    - Orders older than 30 days → return window expired
-    - Sale items → store credit only
-    - All others within 30 days → full refund
+    - Aurelia Couture → exchange only, no refunds
+    - Sale items → store credit within 7 days only
+    - Nocturne → full refund within 21 days
+    - All other items → full refund within 14 days
 
     Args:
         order_id: unique order ID string e.g. 'O0002'
@@ -147,7 +148,7 @@ def evaluate_return(order_id: str) -> str:
             supabase.table("orders")
             .select(
                 "order_id, order_date, size, price_paid, customer_id, "
-                "product_inventory(title, is_sale, is_clearance)"
+                "product_inventory(title, vendor, is_sale, is_clearance)"
             )
             .eq("order_id", order_id)
             .limit(1)
@@ -159,6 +160,7 @@ def evaluate_return(order_id: str) -> str:
 
         order   = result.data[0]
         product = order.get("product_inventory", {})
+        vendor  = product.get("vendor", "")
 
         order_date = datetime.fromisoformat(order["order_date"])
         days_since = (datetime.now() - order_date).days
@@ -169,22 +171,53 @@ def evaluate_return(order_id: str) -> str:
                 "reason": "Clearance items are final sale — not returnable",
                 "days_since_order": days_since, "order": order,
             }
-        elif days_since > 30:
+
+        elif vendor == "Aurelia Couture":
             verdict = {
-                "eligible": False, "return_type": None,
-                "reason": f"Return window expired — order was {days_since} days ago",
+                "eligible": True, "return_type": "exchange_only",
+                "reason": "Aurelia Couture policy — exchanges only, no refunds. Customer pays return shipping unless defective.",
                 "days_since_order": days_since, "order": order,
             }
-        elif product.get("is_sale"):
+
+        elif product.get("is_sale") and days_since <= 7:
             verdict = {
                 "eligible": True, "return_type": "store_credit",
-                "reason": "Sale items qualify for store credit only",
+                "reason": f"Sale item — store credit only. {7 - days_since} days remaining in return window.",
                 "days_since_order": days_since, "order": order,
             }
-        else:
+
+        elif product.get("is_sale") and days_since > 7:
+            verdict = {
+                "eligible": False, "return_type": None,
+                "reason": f"Sale item return window expired — only 7 days allowed, order was {days_since} days ago.",
+                "days_since_order": days_since, "order": order,
+            }
+
+        elif vendor == "Nocturne" and days_since <= 21:
             verdict = {
                 "eligible": True, "return_type": "full_refund",
-                "reason": f"Eligible for full refund — {30 - days_since} days remaining",
+                "reason": f"Nocturne extended return window — {21 - days_since} days remaining.",
+                "days_since_order": days_since, "order": order,
+            }
+
+        elif vendor == "Nocturne" and days_since > 21:
+            verdict = {
+                "eligible": False, "return_type": None,
+                "reason": f"Nocturne extended window expired — 21 days allowed, order was {days_since} days ago.",
+                "days_since_order": days_since, "order": order,
+            }
+
+        elif days_since <= 14:
+            verdict = {
+                "eligible": True, "return_type": "full_refund",
+                "reason": f"Eligible for full refund — {14 - days_since} days remaining in return window.",
+                "days_since_order": days_since, "order": order,
+            }
+
+        else:
+            verdict = {
+                "eligible": False, "return_type": None,
+                "reason": f"Return window expired — 14 days allowed, order was {days_since} days ago.",
                 "days_since_order": days_since, "order": order,
             }
 
@@ -239,6 +272,14 @@ Response format for returns:
 **Return decision: ✅ Approved / ❌ Not Eligible**
 **Reason:** [2-3 sentences, policy-based, never guess]
 **Next steps:** [exact instructions or alternatives]
+POLICY RULES:
+- Clearance → never returnable
+- Normal items → full refund within 14 days
+- Sale items → store credit within 7 days only
+- Aurelia Couture → exchange only, no refunds
+- Nocturne → extended 21-day return window
+- Size exchanges allowed if stock is available
+- Customer pays return shipping unless item is defective
 
 ━━━ RULES ━━━
 - Never hallucinate — only use data from tools
