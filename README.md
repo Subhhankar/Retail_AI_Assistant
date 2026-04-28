@@ -1,71 +1,68 @@
-# Maison — AI Retail Assistant
+# Maison — Retail AI Assistant
 
-A multi-agent AI assistant for fashion retail, built with LangGraph, Groq (LLaMA 3.3), Supabase, and Streamlit.
+An intelligent AI assistant for a premium fashion retail store, built with LangGraph and Groq. One agent handles product discovery, style recommendations, order inquiries, and return evaluations.
 
-## Agents
+---
 
-| Agent | Tools | Handles |
-|---|---|---|
-| Personal Shopper | `search_products`, `get_product` | Browse, search, product recommendations |
-| Customer Support | `get_order`, `evaluate_return` | Order lookup, return eligibility |
+## Features
 
-An **orchestrator** classifies every incoming message and routes it to the right agent automatically.
+- **Product Search** — filter by size, price, tags, sale/clearance status
+- **Style Recommendations** — ranked by stock availability, bestseller score, and budget
+- **Order Lookup** — fetch order details with linked product info
+- **Return Evaluation** — policy-based return eligibility decisions
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| LLM | Groq — `llama-3.3-70b-versatile` |
+| Agent Framework | LangGraph |
+| Database | Supabase (PostgreSQL) |
+| UI | Streamlit |
+| Retries | Tenacity |
+
+---
 
 ## Project Structure
 
 ```
-├── app.py                  # Streamlit UI
-├── orchestrator.py         # LLM-based intent router
-├── supabase_client.py      # Shared Supabase client
-├── agents/
-│   ├── __init__.py
-│   ├── shopper_agent.py    # Personal shopper graph + runner
-│   └── support_agent.py    # Customer support graph + runner
+Retail_AI_Assistant/
+├── app.py               # Streamlit UI
+├── agent.py             # Single agent — all tools and graph
+├── supabase_client.py   # Shared Supabase client
 ├── requirements.txt
-└── .env.example
+└── .env
 ```
+
+---
 
 ## Setup
 
-### 1. Clone the repo
-
+**1. Clone the repository**
 ```bash
-git clone https://github.com/your-username/maison-ai.git
-cd maison-ai
+git clone https://github.com/Subhhankar/Retail_AI_Assistant
+cd Retail_AI_Assistant
 ```
 
-### 2. Create a virtual environment
-
-```bash
-python -m venv venv
-source venv/bin/activate      # macOS/Linux
-venv\Scripts\activate         # Windows
-```
-
-### 3. Install dependencies
-
+**2. Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
+**3. Configure environment variables**
 
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and fill in your keys:
-
-```
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_service_role_key
+Create a `.env` file in the root directory:
+```env
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
 GROQ_API_KEY=your_groq_api_key
 ```
 
-### 5. Set up Supabase RLS
+**4. Enable Supabase Row Level Security**
 
-Run this in the Supabase SQL editor to allow reads:
-
+Run this in your Supabase SQL editor:
 ```sql
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "allow_all" ON orders FOR SELECT USING (true);
@@ -74,25 +71,19 @@ ALTER TABLE product_inventory ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "allow_all" ON product_inventory FOR SELECT USING (true);
 ```
 
-### 6. Run the app
-
+**5. Run the app**
 ```bash
 streamlit run app.py
 ```
 
-## Return Policy
+---
 
-| Condition | Outcome |
-|---|---|
-| Clearance item | ❌ Not eligible — final sale |
-| Order > 30 days old | ❌ Return window expired |
-| Sale item within 30 days | ✅ Store credit only |
-| Regular item within 30 days | ✅ Full refund |
+---
 
-## Tech Stack
+## Database Schema
 
-- **LLM** — Groq `llama-3.3-70b-versatile`
-- **Agent framework** — LangGraph
-- **Database** — Supabase (PostgreSQL)
-- **UI** — Streamlit
-- **Retries** — Tenacity
+**`product_inventory`**
+`product_id`, `title`, `vendor`, `price`, `compare_at_price`, `tags`, `sizes_available`, `stock_per_size`, `is_sale`, `is_clearance`, `bestseller_score`
+
+**`orders`**
+`order_id`, `order_date`, `size`, `price_paid`, `customer_id`, `product_id` (FK → product_inventory)
