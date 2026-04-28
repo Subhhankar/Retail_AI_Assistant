@@ -1,6 +1,5 @@
 import sys
 import os
-import re
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
@@ -66,7 +65,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
     background: rgba(255,255,255,0.03) !important;
     border: 1px solid rgba(180,150,100,0.2) !important;
     border-radius: 2px !important;
-    color: #000000 !important;
+    color: #f0ece4 !important;
     font-family: 'Montserrat', sans-serif !important;
     font-size: 0.82rem !important;
 }
@@ -119,41 +118,28 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load orchestrator ─────────────────────────────────────────────────────────
+# ── Load single agent ─────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
-def load_orchestrator():
+def load_agent():
     try:
-        from orchestrator import run_orchestrator
-        return run_orchestrator, None
+        from agent import run_agent, reset_history
+        return run_agent, reset_history, None
     except Exception as e:
-        return None, str(e)
+        return None, None, str(e)
 
-run_fn, _err = load_orchestrator()
+run_fn, reset_fn, _err = load_agent()
 
 # ── Session state ─────────────────────────────────────────────────────────────
-if "messages"      not in st.session_state: st.session_state.messages      = []
-if "chat_history"  not in st.session_state: st.session_state.chat_history  = []
-if "last_agent"    not in st.session_state: st.session_state.last_agent    = None
-if "turn_count"    not in st.session_state: st.session_state.turn_count    = 0
+if "messages"    not in st.session_state: st.session_state.messages    = []
+if "turn_count"  not in st.session_state: st.session_state.turn_count  = 0
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def detect_agent(text: str):
-    t = text.lower()
-    if any(s in t for s in ["return decision", "price paid", "order #", "return window", "eligible"]):
-        return "support"
-    if any(s in t for s in ["recommendation", "in stock", "bestseller", "budget"]):
-        return "shopper"
-    return None
-
 def chat(user_input: str) -> str:
     if run_fn is None:
         return f"⚠️ Backend failed to load: {_err}"
     try:
-        import orchestrator as _orch
-        _orch.chat_history = st.session_state.chat_history
-        response = run_fn(user_input)
-        st.session_state.chat_history = _orch.chat_history
-        return response
+        import agent as _agent
+        return _agent.run_agent(user_input)
     except Exception as e:
         return f"Error: {e}"
 
@@ -168,20 +154,12 @@ with st.sidebar:
     <hr style='border:none;border-top:1px solid rgba(180,150,100,0.12);margin:0 0 1.2rem'>
     """, unsafe_allow_html=True)
 
-    agent_color = {"shopper": "#c9a96e", "support": "#a0c0dc"}.get(
-        st.session_state.last_agent, "#4a3a2a"
-    )
-    agent_label = {
-        "shopper": "Personal Shopper",
-        "support": "Customer Support"
-    }.get(st.session_state.last_agent, "Awaiting query")
-
     st.markdown(f"""
     <div style='margin-bottom:1.2rem'>
         <div style='font-size:0.58rem;letter-spacing:0.22em;text-transform:uppercase;
-        color:#4a3a2a;margin-bottom:0.5rem'>Active Agent</div>
-        <div style='font-size:0.75rem;color:{agent_color};font-weight:500'>
-            {'◉' if st.session_state.last_agent else '○'} {agent_label}
+        color:#4a3a2a;margin-bottom:0.5rem'>Agent</div>
+        <div style='font-size:0.75rem;color:#c9a96e;font-weight:500'>
+            ◉ Maison AI
         </div>
     </div>
     <div style='margin-bottom:1.2rem'>
@@ -204,10 +182,13 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     if st.button("✕  Clear Conversation"):
-        st.session_state.messages     = []
-        st.session_state.chat_history = []
-        st.session_state.last_agent   = None
-        st.session_state.turn_count   = 0
+        st.session_state.messages    = []
+        st.session_state.turn_count  = 0
+        try:
+            import agent as _agent
+            _agent.reset_history()
+        except Exception:
+            pass
         st.rerun()
 
     if _err:
@@ -287,10 +268,6 @@ with col:
             with st.spinner(""):
                 response = chat(query)
             st.markdown(response)
-
-        agent = detect_agent(response)
-        if agent:
-            st.session_state.last_agent = agent
 
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
